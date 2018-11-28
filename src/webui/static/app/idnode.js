@@ -323,6 +323,7 @@ tvheadend.IdNodeField = function(conf)
             header: this.text,
             editor: this.editor({create: false}),
             renderer: cfg.renderer ? cfg.renderer(this.store) : this.renderer(this.store),
+            groupRenderer: cfg.groupRenderer ? cfg.groupRenderer(this.store) : this.renderer(this.store),
             editable: !this.rdonly,
             hidden: this.get_hidden(uilevel),
             filter: {
@@ -1238,6 +1239,7 @@ tvheadend.idnode_editor = function(_uilevel, item, conf)
         }
         var helpBtn = new Ext.Button({
             text: _('Help'),
+            tooltip: _('View help docs.'),
             iconCls: 'help',
             handler: help
         });
@@ -2106,6 +2108,7 @@ tvheadend.idnode_grid = function(panel, conf)
         buttons.push(abuttons.uilevel ? '-' : '->');
         buttons.push({
             text: _('Help'),
+            tooltip: _('View help docs.'),
             iconCls: 'help',
             handler: help
         });
@@ -2511,6 +2514,7 @@ tvheadend.idnode_form_grid = function(panel, conf)
         buttons.push(abuttons.uilevel ? '-' : '->');
         buttons.push({
             text: _('Help'),
+            tooltip: _('View help docs.'),
             iconCls: 'help',
             handler: help
         });
@@ -2955,6 +2959,7 @@ tvheadend.idnode_simple = function(panel, conf)
         buttons.push(abuttons.uilevel ? '-' : '->');
         buttons.push({
             text: _('Help'),
+            tooltip: _('View help docs.'),
             iconCls: 'help',
             handler: help
         });

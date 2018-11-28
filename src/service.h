@@ -311,7 +311,7 @@ typedef struct service {
    * This mutex also protects all elementary_stream_t instances for this
    * transport.
    */
-  pthread_mutex_t s_stream_mutex;
+  tvh_mutex_t s_stream_mutex;
 
   /**
    *
@@ -435,10 +435,10 @@ int service_is_sdtv(const service_t *t);
 int service_is_uhdtv(const service_t *t);
 int service_is_hdtv(const service_t *t);
 int service_is_radio(const service_t *t);
-int service_is_other(const service_t *t);
-
 static inline int service_is_tv( const service_t *s)
   { return service_is_hdtv(s) || service_is_sdtv(s) || service_is_uhdtv(s); }
+static inline int service_is_other(const service_t *t)
+  { return !service_is_tv(t) && !service_is_radio(t); }
 
 int service_is_encrypted ( const service_t *t );
 

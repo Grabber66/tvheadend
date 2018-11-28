@@ -160,7 +160,7 @@ http_xmltv_programme_one(htsbuf_queue_t *hq, const char *hostpath,
     htsmsg_field_t *f;
     HTSMSG_FOREACH(f, ebc->credits) {
       htsbuf_qprintf(hq, "    <%s>", f->u.str);
-      htsbuf_append_and_escape_xml(hq, f->hmf_name);
+      htsbuf_append_and_escape_xml(hq, htsmsg_field_name(f));
       htsbuf_qprintf(hq, "</%s>\n", f->u.str);
     }
     htsbuf_append_str(hq, "  </credits>\n");
@@ -318,7 +318,7 @@ page_xmltv(http_connection_t *hc, const char *remain, void *opaque)
   if (nc == 2)
     http_deescape(components[1]);
 
-  pthread_mutex_lock(&global_lock);
+  tvh_mutex_lock(&global_lock);
 
   if (nc == 2 && !strcmp(components[0], "channelid"))
     ch = channel_find_by_id(atoi(components[1]));
@@ -347,7 +347,7 @@ page_xmltv(http_connection_t *hc, const char *remain, void *opaque)
     }
   }
 
-  pthread_mutex_unlock(&global_lock);
+  tvh_mutex_unlock(&global_lock);
 
   if (r == 0)
     http_output_content(hc, "text/xml");

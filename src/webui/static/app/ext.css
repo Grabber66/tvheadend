@@ -228,6 +228,10 @@
     background-image: url(../icons/accept.png) !important;
 }
 
+.epgrelated {
+    background-image: url(../icons/clock.png) !important;
+}
+
 .duprec {
     background-image: url(../icons/control_repeat_blue.png) !important;
 }
@@ -656,6 +660,10 @@
     width: 100px;
 }
 
+.x-nice-customformat {
+    display: inline-block;
+    width: 18em;
+}
 
 .x-nice-dayofweek {
     display: inline-block;

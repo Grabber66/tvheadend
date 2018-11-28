@@ -16,17 +16,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <pthread.h>
 #include <ctype.h>
-#include <assert.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
-#include <errno.h>
-#include <math.h>
-#include <time.h>
 
 #include "tvheadend.h"
 #include "settings.h"
@@ -1410,7 +1400,7 @@ dvr_autorec_init(void)
     HTSMSG_FOREACH(f, l) {
       if((c = htsmsg_get_map_by_field(f)) == NULL)
         continue;
-      (void)dvr_autorec_create(f->hmf_name, c);
+      (void)dvr_autorec_create(htsmsg_field_name(f), c);
     }
     htsmsg_destroy(l);
   }
@@ -1421,10 +1411,10 @@ dvr_autorec_done(void)
 {
   dvr_autorec_entry_t *dae;
 
-  pthread_mutex_lock(&global_lock);
+  tvh_mutex_lock(&global_lock);
   while ((dae = TAILQ_FIRST(&autorec_entries)) != NULL)
     autorec_entry_destroy(dae, 0);
-  pthread_mutex_unlock(&global_lock);
+  tvh_mutex_unlock(&global_lock);
 }
 
 void
