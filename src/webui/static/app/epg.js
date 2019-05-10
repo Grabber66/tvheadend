@@ -473,7 +473,7 @@ tvheadend.epgDetails = function(grid, index) {
         title: title,
         iconCls: 'broadcast_details',
         layout: 'fit',
-        width: 760,
+        width: 790,
         height: windowHeight,
         constrainHeader: true,
         buttons: buttons,
@@ -1504,7 +1504,12 @@ tvheadend.epg = function() {
           enabled: 1,
           comment: _('Created from EPG query')
         };
-        if (params.title) conf.title = params.title;
+        if (params.title) {
+	  conf.title = params.title;
+          // Amend comment to include the title to make it easier for
+	  // user to match upcoming/finished recordings to autorecs.
+          conf.comment = conf.title + _(' - ') + conf.comment;
+        }
         if (params.fulltext) conf.fulltext = params.fulltext;
         if (params.new) conf.btype = 3; // DVR_AUTOREC_BTYPE_NEW in dvr.h has value 3.
         if (params.channel) conf.channel = params.channel;

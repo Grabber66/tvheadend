@@ -153,7 +153,7 @@ page_login(http_connection_t *hc, const char *remain, void *opaque)
     http_redirect(hc, "/", &hc->hc_req_args, 0);
     return 0;
   } else {
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
   }
 }
 
@@ -508,9 +508,10 @@ http_m3u_playlist_add(htsbuf_queue_t *hq, const char *hostpath,
   if (urlauth == URLAUTH_TICKET)
     ticket = access_ticket_create(url_remain, access);
   htsbuf_append_str(hq, "#EXTINF:-1");
-  if (logo) {
-    if (strncmp(logo, "imagecache/", 11) == 0) {
-      htsbuf_qprintf(hq, " logo=\"%s/%s", hostpath, logo);
+  if (!strempty(logo)) {
+    int id = imagecache_get_id(logo);
+    if (id) {
+      htsbuf_qprintf(hq, " logo=\"%s/imagecache/%d", hostpath, id);
       switch (urlauth) {
       case URLAUTH_NONE:
         break;
@@ -578,7 +579,7 @@ http_satip_m3u_playlist_add(htsbuf_queue_t *hq, const char *hostpath,
   const char *name, *logo;
   idnode_list_mapping_t *ilm;
   service_t *s = NULL;
-  int src;
+  int id, src;
 
   LIST_FOREACH(ilm, &ch->ch_services, ilm_in2_link) {
     /* cannot handle channels with more services for SAT>IP */
@@ -591,16 +592,15 @@ http_satip_m3u_playlist_add(htsbuf_queue_t *hq, const char *hostpath,
     return;
   name = channel_get_name(ch, blank);
   logo = channel_get_icon(ch);
+  id = imagecache_get_id(logo);
   snprintf(buf, sizeof(buf), "/stream/channelid/%d", channel_get_id(ch));
   htsbuf_append_str(hq, "#EXTINF:-1");
-  if (logo) {
-    if (strncmp(logo, "imagecache/", 11) == 0) {
-      htsbuf_qprintf(hq, " logo=%s/%s", hostpath, logo);
-      if (urlauth == URLAUTH_CODE && !strempty(access->aa_auth))
-        htsbuf_qprintf(hq, "?auth=%s", access->aa_auth);
-    } else {
-      htsbuf_qprintf(hq, " logo=%s", logo);
-    }
+  if (id) {
+    htsbuf_qprintf(hq, " logo=%s/imagecache/%d", hostpath, id);
+    if (urlauth == URLAUTH_CODE && !strempty(access->aa_auth))
+      htsbuf_qprintf(hq, "?auth=%s", access->aa_auth);
+  } else if (!strempty(logo)) {
+    htsbuf_qprintf(hq, " logo=%s", logo);
   }
   htsbuf_qprintf(hq, ",%s\n%s%s?profile=pass", name, hostpath, buf);
   if (urlauth == URLAUTH_CODE && !strempty(access->aa_auth))
@@ -615,17 +615,17 @@ static int
 http_channel_playlist(http_connection_t *hc, int pltype, int urlauth, channel_t *channel)
 {
   htsbuf_queue_t *hq;
-  char buf[255], chnum[32];
-  char *profile, *hostpath;
+  char buf[255], hostpath[512], chnum[32];
+  char *profile;
   const char *name, *blank;
   const char *lang = hc->hc_access->aa_lang_ui;
   char ubuf[UUID_HEX_SIZE];
 
   if (http_access_verify_channel(hc, ACCESS_STREAMING, channel))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
 
   profile = profile_validate_name(http_arg_get(&hc->hc_req_args, "profile"));
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
 
   hq = &hc->hc_reply;
 
@@ -654,7 +654,6 @@ http_channel_playlist(http_connection_t *hc, int pltype, int urlauth, channel_t 
 
   }
 
-  free(hostpath);
   free(profile);
   return 0;
 }
@@ -667,21 +666,20 @@ static int
 http_tag_playlist(http_connection_t *hc, int pltype, int urlauth, channel_tag_t *tag)
 {
   htsbuf_queue_t *hq;
-  char buf[255], chnum[32], ubuf[UUID_HEX_SIZE];
-  char *profile, *hostpath;
+  char buf[255], hostpath[512], chnum[32], ubuf[UUID_HEX_SIZE];
+  char *profile;
   const char *name, *blank, *sort, *lang;
   channel_t *ch;
   channel_t **chlist;
   int idx, count = 0;
 
-  if(hc->hc_access == NULL ||
-     access_verify2(hc->hc_access, ACCESS_STREAMING))
-    return HTTP_STATUS_UNAUTHORIZED;
+  if (access_verify2(hc->hc_access, ACCESS_STREAMING))
+    return http_noaccess_code(hc);
 
   lang = hc->hc_access->aa_lang_ui;
   hq = &hc->hc_reply;
   profile = profile_validate_name(http_arg_get(&hc->hc_req_args, "profile"));
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
   sort = http_arg_get(&hc->hc_req_args, "sort");
   chlist = channel_get_sorted_list_for_tag(sort, tag, &count);
 
@@ -711,7 +709,6 @@ http_tag_playlist(http_connection_t *hc, int pltype, int urlauth, channel_tag_t 
   }
 
   free(chlist);
-  free(hostpath);
   free(profile);
   return 0;
 }
@@ -724,7 +721,7 @@ static int
 http_tag_list_playlist(http_connection_t *hc, int pltype, int urlauth)
 {
   htsbuf_queue_t *hq;
-  char buf[255];
+  char buf[255], hostpath[512];
   channel_tag_t *ct;
   channel_tag_t **ctlist;
   channel_t *ch;
@@ -732,18 +729,17 @@ http_tag_list_playlist(http_connection_t *hc, int pltype, int urlauth)
   int labelidx = 0;
   int idx, count = 0;
   int chidx, chcount = 0;
-  char *profile, *hostpath;
+  char *profile;
   const char *blank, *sort, *lang;
   idnode_list_mapping_t *ilm;
 
-  if(hc->hc_access == NULL ||
-     access_verify2(hc->hc_access, ACCESS_STREAMING))
-    return HTTP_STATUS_UNAUTHORIZED;
+  if (access_verify2(hc->hc_access, ACCESS_STREAMING))
+    return http_noaccess_code(hc);
 
   lang = hc->hc_access->aa_lang_ui;
   hq = &hc->hc_reply;
   profile = profile_validate_name(http_arg_get(&hc->hc_req_args, "profile"));
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
   sort = http_arg_get(&hc->hc_req_args, "sort");
   ctlist = channel_tag_get_sorted_list(sort, &count);
 
@@ -760,7 +756,8 @@ http_tag_list_playlist(http_connection_t *hc, int pltype, int urlauth)
     if (pltype == PLAYLIST_M3U) {
       snprintf(buf, sizeof(buf), "/playlist/tagid/%d", idnode_get_short_uuid(&ct->ct_id));
       http_m3u_playlist_add(hq, hostpath, buf, profile, ct->ct_name, NULL,
-                            channel_tag_get_icon(ct), NULL, urlauth, hc->hc_access);
+                            channel_tag_get_icon(ct),
+                            NULL, urlauth, hc->hc_access);
     } else if (pltype == PLAYLIST_E2) {
       htsbuf_qprintf(hq, "#SERVICE 1:64:%d:0:0:0:0:0:0:0::%s\n", labelidx++, ct->ct_name);
       htsbuf_qprintf(hq, "#DESCRIPTION %s\n", ct->ct_name);
@@ -786,7 +783,6 @@ http_tag_list_playlist(http_connection_t *hc, int pltype, int urlauth)
   free(ctlist);
   free(chlist);
 
-  free(hostpath);
   free(profile);
   return 0;
 }
@@ -799,22 +795,21 @@ static int
 http_channel_list_playlist(http_connection_t *hc, int pltype, int urlauth)
 {
   htsbuf_queue_t *hq;
-  char buf[255], chnum[32], ubuf[UUID_HEX_SIZE];
+  char buf[255], hostpath[512], chnum[32], ubuf[UUID_HEX_SIZE];
   channel_t *ch;
   channel_t **chlist;
   int idx = 0, count = 0;
-  char *profile, *hostpath;
+  char *profile;
   const char *name, *blank, *sort, *lang;
 
-  if(hc->hc_access == NULL ||
-     access_verify2(hc->hc_access, ACCESS_STREAMING))
-    return HTTP_STATUS_UNAUTHORIZED;
+  if (access_verify2(hc->hc_access, ACCESS_STREAMING))
+    return http_noaccess_code(hc);
 
   hq = &hc->hc_reply;
 
   lang = hc->hc_access->aa_lang_ui;
   profile = profile_validate_name(http_arg_get(&hc->hc_req_args, "profile"));
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
   sort = http_arg_get(&hc->hc_req_args, "sort");
   chlist = channel_get_sorted_list(sort, 0, &count);
   blank = tvh_gettext_lang(lang, channel_blank_name);
@@ -843,7 +838,6 @@ http_channel_list_playlist(http_connection_t *hc, int pltype, int urlauth)
   }
 
   free(chlist);
-  free(hostpath);
   free(profile);
   return 0;
 }
@@ -857,10 +851,9 @@ static int
 http_dvr_list_playlist(http_connection_t *hc, int pltype, int urlauth)
 {
   htsbuf_queue_t *hq;
-  char buf[255], ubuf[UUID_HEX_SIZE];
+  char buf[255], hostpath[512], ubuf[UUID_HEX_SIZE];
   dvr_entry_t *de;
   const char *uuid;
-  char *hostpath;
   off_t fsize;
   time_t durration;
   struct tm tm;
@@ -870,7 +863,7 @@ http_dvr_list_playlist(http_connection_t *hc, int pltype, int urlauth)
     return HTTP_STATUS_BAD_REQUEST;
 
   hq = &hc->hc_reply;
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
 
   htsbuf_append_str(hq, "#EXTM3U\n");
   LIST_FOREACH(de, &dvrentries, de_global_link) {
@@ -912,7 +905,6 @@ http_dvr_list_playlist(http_connection_t *hc, int pltype, int urlauth)
     htsbuf_append_str(hq, "\n");
   }
 
-  free(hostpath);
   return 0;
 }
 
@@ -923,25 +915,24 @@ static int
 http_dvr_playlist(http_connection_t *hc, int pltype, int urlauth, dvr_entry_t *de)
 {
   htsbuf_queue_t *hq = &hc->hc_reply;
-  char buf[255], ubuf[UUID_HEX_SIZE];
+  char buf[255], hostpath[512], ubuf[UUID_HEX_SIZE];
   const char *ticket_id = NULL, *uuid;
   time_t durration = 0;
   off_t fsize = 0;
   int bandwidth = 0, ret = 0;
   struct tm tm;  
-  char *hostpath;
 
   if(pltype != PLAYLIST_M3U)
     return HTTP_STATUS_BAD_REQUEST;
 
   if(http_access_verify(hc, ACCESS_RECORDER))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
 
   if(dvr_entry_verify(de, hc->hc_access, 1))
     return HTTP_STATUS_NOT_FOUND;
 
-  hostpath  = http_get_hostpath(hc);
-  durration  = dvr_entry_get_stop_time(de) - dvr_entry_get_start_time(de, 0);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
+  durration = dvr_entry_get_stop_time(de) - dvr_entry_get_start_time(de, 0);
   fsize = dvr_get_filesize(de, 0);
 
   if(fsize) {
@@ -974,7 +965,6 @@ http_dvr_playlist(http_connection_t *hc, int pltype, int urlauth, dvr_entry_t *d
     ret = HTTP_STATUS_NOT_FOUND;
   }
 
-  free(hostpath);
   return ret;
 }
 
@@ -1113,7 +1103,7 @@ page_http_playlist_auth
   (http_connection_t *hc, const char *remain, void *opaque)
 {
   if (hc->hc_access == NULL || strempty(hc->hc_access->aa_auth))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
   return page_http_playlist_(hc, remain, opaque, URLAUTH_CODE);
 }
 
@@ -1135,7 +1125,7 @@ http_stream_service(http_connection_t *hc, service_t *service, int weight)
   int flags, eflags = 0;
 
   if(http_access_verify(hc, ACCESS_ADVANCED_STREAMING))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
 
   if ((str = http_arg_get(&hc->hc_req_args, "descramble")))
     if (strcmp(str, "0") == 0)
@@ -1208,7 +1198,7 @@ http_stream_mux(http_connection_t *hc, mpegts_mux_t *mm, int weight)
   int res = HTTP_STATUS_SERVICE, i;
 
   if(http_access_verify(hc, ACCESS_ADVANCED_STREAMING))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
 
   if((tcp_id = http_stream_preop(hc)) == NULL)
     return HTTP_STATUS_NOT_ALLOWED;
@@ -1287,7 +1277,7 @@ http_stream_channel(http_connection_t *hc, channel_t *ch, int weight)
   int res = HTTP_STATUS_SERVICE;
 
   if (http_access_verify_channel(hc, ACCESS_STREAMING, ch))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
 
   if(!(pro = profile_find_by_list(hc->hc_access->aa_profiles,
                                   http_arg_get(&hc->hc_req_args, "profile"),
@@ -1408,12 +1398,12 @@ static int
 page_xspf(http_connection_t *hc, const char *remain, void *opaque, int urlauth)
 {
   htsbuf_queue_t *hq = &hc->hc_reply;
-  char buf[80], *hostpath;
+  char buf[80], hostpath[512];
   const char *title, *profile, *ticket, *image, *delim = "?";
 
   if ((title = http_arg_get(&hc->hc_req_args, "title")) == NULL)
     title = "TVHeadend Stream";
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
   htsbuf_qprintf(hq, "\
 <?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\
 <playlist version=\"1\" xmlns=\"http://xspf.org/ns/0/\">\r\n\
@@ -1421,7 +1411,6 @@ page_xspf(http_connection_t *hc, const char *remain, void *opaque, int urlauth)
      <track>\r\n\
        <title>%s</title>\r\n\
        <location>%s/%s", title, hostpath, remain);
-  free(hostpath);
   profile = http_arg_get(&hc->hc_req_args, "profile");
   if (profile) {
     htsbuf_qprintf(hq, "?profile=%s", profile);
@@ -1469,17 +1458,16 @@ static int
 page_m3u(http_connection_t *hc, const char *remain, void *opaque, int urlauth)
 {
   htsbuf_queue_t *hq = &hc->hc_reply;
-  char buf[80], *hostpath;
+  char buf[80], hostpath[512];
   const char *title, *profile, *ticket, *delim = "?";
 
   if ((title = http_arg_get(&hc->hc_req_args, "title")) == NULL)
     title = "TVHeadend Stream";
-  hostpath = http_get_hostpath(hc);
+  http_get_hostpath(hc, hostpath, sizeof(hostpath));
   htsbuf_qprintf(hq, "\
 #EXTM3U\r\n\
 #EXTINF:-1,%s\r\n\
 %s/%s", title, hostpath, remain);
-  free(hostpath);
   profile = http_arg_get(&hc->hc_req_args, "profile");
   if (profile) {
     htsbuf_qprintf(hq, "?profile=%s", profile);
@@ -1567,12 +1555,11 @@ page_play_(http_connection_t *hc, const char *remain, void *opaque, int urlauth)
   if(remain == NULL)
     return HTTP_STATUS_NOT_FOUND;
 
-  if(hc->hc_access == NULL ||
-     access_verify2(hc->hc_access, ACCESS_OR |
+  if(access_verify2(hc->hc_access, ACCESS_OR |
                                    ACCESS_STREAMING |
                                    ACCESS_ADVANCED_STREAMING |
                                    ACCESS_RECORDER))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
 
   playlist = http_arg_get(&hc->hc_req_args, "playlist");
   if (playlist) {
@@ -1602,8 +1589,79 @@ static int
 page_play_auth(http_connection_t *hc, const char *remain, void *opaque)
 {
   if (hc->hc_access == NULL || strempty(hc->hc_access->aa_auth))
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
   return page_play_(hc, remain, opaque, URLAUTH_CODE);
+}
+
+/**
+ *
+ */
+static const char *webui_dvbapi_get_service_type(mpegts_service_t *ms)
+{
+  switch(ms->s_dvb_servicetype) {
+   case 0x01:
+   case 0x11:
+   default:
+     return "TV";
+
+   case 0x02:
+   case 0x07:
+   case 0x0a:
+     return "Radio";
+
+   case 0x03:
+     return "Teletext";
+
+   case 0x0c:
+     return "Data";
+  }
+}
+
+static int
+page_srvid2(http_connection_t *hc, const char *remain, void *opaque)
+{
+  htsbuf_queue_t *hq = &hc->hc_reply;
+  service_t *t;
+  mpegts_service_t *ms;
+  caid_t *ca;
+  elementary_stream_t *st;
+  int first;
+  char buf1[16], buf2[16], buf3[16];
+
+  tvh_mutex_lock(&global_lock);
+  TAILQ_FOREACH(t, &service_all, s_all_link) {
+    if (!idnode_is_instance(&t->s_id, &mpegts_service_class))
+      continue;
+    ms = (mpegts_service_t *)t;
+    first = 1;
+    TAILQ_FOREACH(st, &t->s_components.set_all, es_link) {
+      LIST_FOREACH(ca, &st->es_caids, link)
+        ca->filter = 0;
+      LIST_FOREACH(ca, &st->es_caids, link) {
+        if (ms->s_components.set_service_id == 0) continue;
+        if (first) {
+          snprintf(buf1, sizeof(buf1), "%04X:", ms->s_components.set_service_id);
+          first = 0;
+        } else {
+          buf1[0] = ','; buf1[1] = '\0';
+        }
+        snprintf(buf2, sizeof(buf2), "%04X", ca->caid);
+        if (ca->providerid > 0)
+          snprintf(buf3, sizeof(buf3), "@%06X", ca->providerid);
+        else
+          buf3[0] = '\0';
+        htsbuf_qprintf(hq, "%s%s%s", buf1, buf2, buf3);
+      }
+    }
+    if (first) continue;
+    htsbuf_qprintf(hq, "|%s|%s||%s\n",
+                   strempty(ms->s_dvb_svcname) ? "???" : ms->s_dvb_svcname,
+                   webui_dvbapi_get_service_type(ms),
+                   ms->s_dvb_mux->mm_network->mn_provider_network_name ?: "");
+  }
+  tvh_mutex_unlock(&global_lock);
+  http_output_content(hc, "text/plain");
+  return 0;
 }
 
 /**
@@ -1647,7 +1705,7 @@ http_serve_file(http_connection_t *hc, const char *fname,
         return HTTP_STATUS_INTERNAL;
       }
       htsbuf_queue_init(&q, 0);
-      htsbuf_append_and_escape_url(&q, basename);
+      htsbuf_append_and_escape_rfc8187(&q, basename);
       str = htsbuf_to_string(&q);
       r = 50 + strlen(str0) + strlen(str);
       disposition = alloca(r);
@@ -1855,12 +1913,11 @@ page_dvrfile(http_connection_t *hc, const char *remain, void *opaque)
   if(remain == NULL)
     return HTTP_STATUS_BAD_REQUEST;
 
-  if(hc->hc_access == NULL ||
-     (access_verify2(hc->hc_access, ACCESS_OR |
-                                    ACCESS_STREAMING |
-                                    ACCESS_ADVANCED_STREAMING |
-                                    ACCESS_RECORDER)))
-    return HTTP_STATUS_UNAUTHORIZED;
+  if(access_verify2(hc->hc_access, ACCESS_OR |
+                                   ACCESS_STREAMING |
+                                   ACCESS_ADVANCED_STREAMING |
+                                   ACCESS_RECORDER))
+    return http_noaccess_code(hc);
 
   tvh_mutex_lock(&global_lock);
   de = dvr_entry_find_by_uuid(remain);
@@ -1872,7 +1929,7 @@ page_dvrfile(http_connection_t *hc, const char *remain, void *opaque)
   }
   if(dvr_entry_verify(de, hc->hc_access, 1)) {
     tvh_mutex_unlock(&global_lock);
-    return HTTP_STATUS_UNAUTHORIZED;
+    return http_noaccess_code(hc);
   }
 
   priv.uuid = remain;
@@ -1911,23 +1968,20 @@ page_imagecache(http_connection_t *hc, const char *remain, void *opaque)
   if(remain == NULL)
     return HTTP_STATUS_NOT_FOUND;
 
-  if(hc->hc_access == NULL ||
-     (access_verify2(hc->hc_access, ACCESS_OR |
-                                    ACCESS_WEB_INTERFACE |
-                                    ACCESS_STREAMING |
-                                    ACCESS_ADVANCED_STREAMING |
-                                    ACCESS_HTSP_STREAMING |
-                                    ACCESS_HTSP_RECORDER |
-                                    ACCESS_RECORDER)))
-    return HTTP_STATUS_UNAUTHORIZED;
+  if(access_verify2(hc->hc_access, ACCESS_OR |
+                                   ACCESS_WEB_INTERFACE |
+                                   ACCESS_STREAMING |
+                                   ACCESS_ADVANCED_STREAMING |
+                                   ACCESS_HTSP_STREAMING |
+                                   ACCESS_HTSP_RECORDER |
+                                   ACCESS_RECORDER))
+    return http_noaccess_code(hc);
 
   if(sscanf(remain, "%d", &id) != 1)
     return HTTP_STATUS_BAD_REQUEST;
 
   /* Fetch details */
-  tvh_mutex_lock(&global_lock);
   r = imagecache_filename(id, fname, sizeof(fname));
-  tvh_mutex_unlock(&global_lock);
 
   if (r)
     return HTTP_STATUS_NOT_FOUND;
@@ -2085,6 +2139,7 @@ webui_init(int xspf)
   http_path_add("/playlist/ticket", NULL, page_http_playlist_ticket, ACCESS_ANONYMOUS);
   http_path_add("/playlist/auth", NULL, page_http_playlist_auth, ACCESS_ANONYMOUS);
   http_path_add("/xmltv", NULL, page_xmltv, ACCESS_ANONYMOUS);
+  http_path_add("/special/srvid2", NULL, page_srvid2, ACCESS_ADMIN);
   http_path_add("/markdown", NULL, page_markdown, ACCESS_ANONYMOUS);
 
   http_path_add("/state", NULL, page_statedump, ACCESS_ADMIN);

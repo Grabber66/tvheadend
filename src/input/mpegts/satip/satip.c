@@ -261,8 +261,8 @@ const idclass_t satip_device_class =
       .id       = "tcp_mode",
       .name     = N_("RTP/AVP/TCP transport supported"),
       .desc     = N_("The server suports the Interlaved TCP transfer mode "
-                     "(embedded data in the RTSP session). And this option "
-                     "enables this mode in all tuners by default."),
+                     "(embedded data in the RTSP session). Selecting this "
+                     "option enables this mode in all tuners by default."),
       .opts     = PO_ADVANCED,
       .off      = offsetof(satip_device_t, sd_tcp_mode),
     },
@@ -371,6 +371,16 @@ const idclass_t satip_device_class =
       .name     = N_("Disable device/firmware-specific workarounds"),
       .opts     = PO_ADVANCED,
       .off      = offsetof(satip_device_t, sd_disable_workarounds),
+    },
+    {
+      .type     = PT_BOOL,
+      .id       = "sigtunerno",
+      .name     = N_("Check tuner-number in signal-status messages"),
+      .desc     = N_("This is a workaround for some tuners that mess up "
+                     "the numbers of tuners. Turn this off when you are not "
+                     "seeing signal strength on all tuners but only on some."),
+      .opts     = PO_ADVANCED,
+      .off      = offsetof(satip_device_t, sd_sig_tunerno),
     },
     {
       .type     = PT_STR,
@@ -569,8 +579,19 @@ satip_device_hack( satip_device_t *sd )
     /* OctopusNet requires pids in the SETUP RTSP command */
   } else if (strstr(sd->sd_info.manufacturer, "Triax") &&
              strstr(sd->sd_info.modelname, "TSS400")) {
+    /* Rolloff is required to tune into DVB-S2 muxes */
     sd->sd_fullmux_ok  = 0;
     sd->sd_pids_max    = 64;
+    sd->sd_pids_len    = 255;
+    sd->sd_pilot_on    = 1;
+  } else if (strstr(sd->sd_info.manufacturer, "KATHREIN") &&
+            (strstr(sd->sd_info.modelname, "EXIP-4124") ||
+             strstr(sd->sd_info.modelname, "EXIP-418") ||
+             strstr(sd->sd_info.modelname, "EXIP-414"))) {
+    /* Rolloff is required to tune into DVB-S2 muxes */
+    sd->sd_fullmux_ok  = 0;
+    sd->sd_pids_max    = 64;
+    sd->sd_pids_len    = 255;
     sd->sd_pilot_on    = 1;
   } else if (strcmp(sd->sd_info.modelname, "TVHeadend SAT>IP") == 0)  {
     sd->sd_pids_max    = 128;
@@ -613,6 +634,7 @@ satip_device_create( satip_device_info_t *info )
   sd->sd_pids_deladd = 1;
   sd->sd_fe          = 1;
   sd->sd_sig_scale   = 240;
+  sd->sd_sig_tunerno = 1;
   sd->sd_dbus_allow  = 1;
 
   if (!tvh_hardware_create0((tvh_hardware_t*)sd, &satip_device_class,

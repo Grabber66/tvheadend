@@ -54,7 +54,7 @@ static void
 api_epg_add_channel ( htsmsg_t *m, channel_t *ch, const char *blank )
 {
   int64_t chnum;
-  char buf[32];
+  char buf[128];
   const char *s;
   htsmsg_add_str(m, "channelName", channel_get_name(ch, blank));
   htsmsg_add_uuid(m, "channelUuid", &ch->ch_id.in_uuid);
@@ -67,16 +67,20 @@ api_epg_add_channel ( htsmsg_t *m, channel_t *ch, const char *blank )
       snprintf(buf, sizeof(buf), "%u", maj);
     htsmsg_add_str(m, "channelNumber", buf);
   }
-  if ((s = channel_get_icon(ch)) != NULL)
-    htsmsg_add_str(m, "channelIcon", s);
+  s = channel_get_icon(ch);
+  if (!strempty(s)) {
+    s = imagecache_get_propstr(s, buf, sizeof(buf));
+    if (s)
+      htsmsg_add_str(m, "channelIcon", s);
+  }
 }
 
 static htsmsg_t *
 api_epg_entry ( epg_broadcast_t *eb, const char *lang, const access_t *perm, const char **blank )
 {
   const char *s, *blank2 = NULL;
-  char buf[64];
-  channel_t     *ch = eb->channel;
+  char buf[32];
+  channel_t *ch = eb->channel;
   htsmsg_t *m, *m2;
   epg_episode_num_t epnum;
   epg_genre_t *eg;
@@ -170,8 +174,12 @@ api_epg_entry ( epg_broadcast_t *eb, const char *lang, const access_t *perm, con
     htsmsg_add_str(m, "episodeOnscreen", buf);
 
   /* Image */
-  if (eb->image)
-    htsmsg_add_str(m, "image", eb->image);
+  s = eb->image;
+  if (!strempty(s)) {
+    s = imagecache_get_propstr(s, buf, sizeof(buf));
+    if (s)
+      htsmsg_add_str(m, "image", s);
+  }
 
   /* Rating */
   if (eb->star_rating)
@@ -620,8 +628,9 @@ api_epg_related
   uint32_t id, entries = 0;
   htsmsg_t *l = htsmsg_create_list();
   epg_broadcast_t *e;
-  char *lang;
-  epg_set_t *serieslink;
+  char *lang, *title_esc, *title_anchor;
+  epg_set_t *serieslink = NULL;
+  const char *title = NULL;
   
   if (htsmsg_get_u32(args, "eventId", &id))
     return -EINVAL;
@@ -630,9 +639,34 @@ api_epg_related
   lang = access_get_lang(perm, htsmsg_get_str(args, "lang"));
   tvh_mutex_lock(&global_lock);
   e = epg_broadcast_find_by_id(id);
-  serieslink = e->serieslink;
-  if (serieslink)
+  /* e might not exist if it is a dvr entry that does not exist in the epg */
+  if (e)
+    serieslink = e->serieslink;
+  if (serieslink) {
     entries = api_epg_episode_sorted(serieslink, perm, l, lang, e);
+  } else {
+    /* Ensure we have a title in the query we are generating.  If no
+     * title, then we return a dummy message.
+     */
+    title = epg_broadcast_get_title(e, lang);
+    if (title) {
+      /* Need to escape/anchor the search, otherwise the film "elf"
+       *  matches titles containing "self".
+       */
+      title_esc = regexp_escape(title);
+      title_anchor = alloca(strlen(title_esc) + 3);
+      sprintf(title_anchor, "^%s$", title_esc);
+      htsmsg_add_str(args, "title", title_anchor);
+      free(title_esc);
+
+      /* Have to unlock here since grid will re-lock */
+      tvh_mutex_unlock(&global_lock);
+      free(lang);
+      /* And let the grid do the query for us */
+      return api_epg_grid(perm, opaque, op, args, resp);
+    }
+    /*FALLTHRU*/
+  }
 
   tvh_mutex_unlock(&global_lock);
   free(lang);

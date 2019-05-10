@@ -18,6 +18,7 @@
  */
 
 #include <signal.h>
+#include <fcntl.h>
 
 #include "iptv_private.h"
 #include "tvhpoll.h"
@@ -38,6 +39,7 @@ typedef struct iptv_thread_pool {
   pthread_t thread;
   iptv_input_t *input;
   tvhpoll_t *poll;
+  th_pipe_t pipe;
   uint32_t streams;
 } iptv_thread_pool_t;
 
@@ -46,7 +48,7 @@ int iptv_tpool_count = 0;
 iptv_thread_pool_t *iptv_tpool_last = NULL;
 gtimer_t iptv_tpool_manage_timer;
 
-static void iptv_input_thread_manage(int count, int force);
+static void iptv_input_thread_manage_cb(void *aux);
 
 static inline int iptv_tpool_safe_count(void)
 {
@@ -457,7 +459,7 @@ iptv_input_stop_mux ( mpegts_input_t *mi, mpegts_mux_instance_t *mmi )
   tvh_mutex_unlock(&iptv_lock);
 
   if (u32 == 0)
-    iptv_input_thread_manage(iptv_tpool_safe_count(), 0);
+    gtimer_arm_rel(&iptv_tpool_manage_timer, iptv_input_thread_manage_cb, NULL, 0);
 }
 
 static void
@@ -484,10 +486,10 @@ iptv_input_pause_check ( iptv_mux_t *im )
   im->im_pcr += (((s64 / 10LL) * 9LL) + 4LL) / 10LL;
   im->im_pcr &= PTS_MASK;
   if (old != im->im_pcr)
-    tvhtrace(LS_IPTV_PCR, "pcr: updated %"PRId64", time start %"PRId64", limit %"PRId64,
-             im->im_pcr, im->im_pcr_start, limit);
+    tvhtrace(LS_IPTV_PCR, "updated %"PRId64", time start %"PRId64", limit %"PRId64", diff %"PRId64,
+             im->im_pcr, im->im_pcr_start, limit, im->im_pcr_end - im->im_pcr_start);
 
-  /* queued more than 3 seconds? trigger the pause */
+  /* queued more than threshold? trigger the pause */
   return im->im_pcr_end - im->im_pcr_start >= limit;
 }
 
@@ -502,6 +504,7 @@ iptv_input_unpause ( void *aux )
   if (im->mm_active) {
     mi = (iptv_input_t *)im->mm_active->mmi_input;
     if (iptv_input_pause_check(im)) {
+      tvhtrace(LS_IPTV_PCR, "paused (in unpause)");
       pause = 1;
     } else {
       tvhtrace(LS_IPTV_PCR, "unpause timer callback");
@@ -535,6 +538,10 @@ iptv_input_thread ( void *aux )
     } else if ( nfds == 0 ) {
       continue;
     }
+
+    if (ev.ptr == &pool->pipe)
+      break;
+
     im = ev.ptr;
     r  = 0;
 
@@ -619,7 +626,7 @@ iptv_input_recv_packets ( iptv_mux_t *im, ssize_t len )
   mmi = im->mm_active;
   if (mmi) {
     if (iptv_input_pause_check(im)) {
-      tvhtrace(LS_IPTV_PCR, "pcr: paused");
+      tvhtrace(LS_IPTV_PCR, "paused");
       return 1;
     }
     mpegts_input_recv_packets(mmi, &im->mm_iptv_buffer,
@@ -633,18 +640,18 @@ iptv_input_recv_packets ( iptv_mux_t *im, ssize_t len )
           im->im_pcr = pcr.pcr_first;
           im->im_pcr_start = getfastmonoclock();
           im->im_pcr_end = im->im_pcr_start + ((s64 * 100LL) + 50LL) / 9LL;
-          tvhtrace(LS_IPTV_PCR, "pcr: first %"PRId64" last %"PRId64", time start %"PRId64", end %"PRId64,
+          tvhtrace(LS_IPTV_PCR, "first %"PRId64" last %"PRId64", time start %"PRId64", end %"PRId64,
                    pcr.pcr_first, pcr.pcr_last, im->im_pcr_start, im->im_pcr_end);
         }
       } else {
         s64 = pts_diff(im->im_pcr, pcr.pcr_last);
         if (s64 != PTS_UNSET) {
           im->im_pcr_end = im->im_pcr_start + ((s64 * 100LL) + 50LL) / 9LL;
-          tvhtrace(LS_IPTV_PCR, "pcr: last %"PRId64", time end %"PRId64, pcr.pcr_last, im->im_pcr_end);
+          tvhtrace(LS_IPTV_PCR, "last %"PRId64", time end %"PRId64, pcr.pcr_last, im->im_pcr_end);
         }
       }
       if (iptv_input_pause_check(im)) {
-        tvhtrace(LS_IPTV_PCR, "pcr: paused");
+        tvhtrace(LS_IPTV_PCR, "paused");
         return 1;
       }
     }
@@ -682,10 +689,11 @@ iptv_input_fd_started ( iptv_input_t *mi, iptv_mux_t *im )
 }
 
 void
-iptv_input_mux_started ( iptv_input_t *mi, iptv_mux_t *im )
+iptv_input_mux_started ( iptv_input_t *mi, iptv_mux_t *im, int reset )
 {
   /* Allocate input buffer */
-  sbuf_reset_and_alloc(&im->mm_iptv_buffer, IPTV_BUF_SIZE);
+  if (reset)
+    sbuf_reset_and_alloc(&im->mm_iptv_buffer, IPTV_BUF_SIZE);
 
   im->im_pcr = PTS_UNSET;
   im->im_pcr_pid = MPEGTS_PID_NONE;
@@ -1222,6 +1230,8 @@ iptv_input_thread_manage(int count, int force)
     pool = calloc(1, sizeof(*pool));
     pool->poll = tvhpoll_create(10);
     pool->input = iptv_create_input(pool);
+    tvh_pipe(O_NONBLOCK, &pool->pipe);
+    tvhpoll_add1(pool->poll, pool->pipe.rd, TVHPOLL_IN, &pool->pipe);
     tvh_thread_create(&pool->thread, NULL, iptv_input_thread, pool, "iptv");
     TAILQ_INSERT_TAIL(&iptv_tpool, pool, link);
     iptv_tpool_count++;
@@ -1229,11 +1239,12 @@ iptv_input_thread_manage(int count, int force)
   while (iptv_tpool_count > count) {
     TAILQ_FOREACH(pool, &iptv_tpool, link)
       if (pool->streams == 0 || force) {
-        tvh_thread_kill(pool->thread, SIGTERM);
+        tvh_write(pool->pipe.wr, "q", 1);
         pthread_join(pool->thread, NULL);
         TAILQ_REMOVE(&iptv_tpool, pool, link);
         mpegts_input_stop_all((mpegts_input_t*)pool->input);
         mpegts_input_delete((mpegts_input_t *)pool->input, 0);
+        tvhpoll_rem1(pool->poll, pool->pipe.rd);
         tvhpoll_destroy(pool->poll);
         free(pool);
         iptv_tpool_count--;
@@ -1242,6 +1253,12 @@ iptv_input_thread_manage(int count, int force)
     if (pool == NULL)
       break;
   }
+}
+
+static void
+iptv_input_thread_manage_cb(void *aux)
+{
+  iptv_input_thread_manage(iptv_tpool_safe_count(), 0);
 }
 
 void iptv_init ( void )

@@ -817,6 +817,27 @@ linuxdvb_frontend_update_pids
     tvh_write(lfe->lfe_dvr_pipe.wr, "c", 1);
 }
 
+static void
+linuxdvb_frontend_create_mux_instance
+  ( mpegts_input_t *mi, mpegts_mux_t *mm )
+{
+  tvh_hardware_t *th;
+  linuxdvb_adapter_t *la;
+  linuxdvb_frontend_t *lfe = (linuxdvb_frontend_t *)mi, *lfe2;
+  char ubuf[UUID_HEX_SIZE];
+
+  idnode_uuid_as_str(&lfe->ti_id, ubuf);
+  mpegts_input_create_mux_instance(mi, mm);
+  /* create the instances for the slaves */
+  LIST_FOREACH(th, &tvh_hardware, th_link) {
+    if (!idnode_is_instance(&th->th_id, &linuxdvb_adapter_class)) continue;
+    la = (linuxdvb_adapter_t*)th;
+    LIST_FOREACH(lfe2, &la->la_frontends, lfe_link)
+      if (lfe2->lfe_master && strcmp(lfe2->lfe_master, ubuf) == 0)
+        mpegts_input_create_mux_instance((mpegts_input_t *)lfe2, mm);
+  }
+}
+
 static idnode_set_t *
 linuxdvb_frontend_network_list ( mpegts_input_t *mi )
 {
@@ -2094,8 +2115,9 @@ linuxdvb_frontend_create
   const char *str, *uuid = NULL, *muuid = NULL;
   char id[16], lname[256], buf[256];
   linuxdvb_frontend_t *lfe;
-  htsmsg_t *scconf;
+  htsmsg_t *oconf = conf, *scconf;
   ssize_t r;
+  int fd;
 
   /* Internal config ID */
   snprintf(id, sizeof(id), "%s #%d", dvb_type2str(type), number);
@@ -2107,7 +2129,8 @@ linuxdvb_frontend_create
   /* Tuner slave */
   snprintf(buf, sizeof(buf), "master for #%d", number);
   if (conf && type == DVB_TYPE_S) {
-    muuid = htsmsg_get_str(conf, buf);
+    /* use the original configuration here */
+    muuid = htsmsg_get_str(oconf, buf);
     if (muuid && uuid && !strcmp(muuid, uuid))
       muuid = NULL;
   }
@@ -2194,16 +2217,17 @@ linuxdvb_frontend_create
   lfe->lfe_dvr_path = strdup(dvr_path);
 
   /* Input callbacks */
-  lfe->ti_wizard_get      = linuxdvb_frontend_wizard_get;
-  lfe->ti_wizard_set      = linuxdvb_frontend_wizard_set;
-  lfe->mi_is_enabled      = linuxdvb_frontend_is_enabled;
-  lfe->mi_warm_mux        = linuxdvb_frontend_warm_mux;
-  lfe->mi_start_mux       = linuxdvb_frontend_start_mux;
-  lfe->mi_stop_mux        = linuxdvb_frontend_stop_mux;
-  lfe->mi_network_list    = linuxdvb_frontend_network_list;
-  lfe->mi_update_pids     = linuxdvb_frontend_update_pids;
-  lfe->mi_enabled_updated = linuxdvb_frontend_enabled_updated;
-  lfe->mi_empty_status    = mpegts_input_empty_status;
+  lfe->ti_wizard_get          = linuxdvb_frontend_wizard_get;
+  lfe->ti_wizard_set          = linuxdvb_frontend_wizard_set;
+  lfe->mi_is_enabled          = linuxdvb_frontend_is_enabled;
+  lfe->mi_warm_mux            = linuxdvb_frontend_warm_mux;
+  lfe->mi_start_mux           = linuxdvb_frontend_start_mux;
+  lfe->mi_stop_mux            = linuxdvb_frontend_stop_mux;
+  lfe->mi_network_list        = linuxdvb_frontend_network_list;
+  lfe->mi_update_pids         = linuxdvb_frontend_update_pids;
+  lfe->mi_create_mux_instance = linuxdvb_frontend_create_mux_instance;
+  lfe->mi_enabled_updated     = linuxdvb_frontend_enabled_updated;
+  lfe->mi_empty_status        = mpegts_input_empty_status;
 
   /* Adapter link */
   lfe->lfe_adapter = la;
@@ -2218,6 +2242,13 @@ linuxdvb_frontend_create
   if (lfe->lfe_type == DVB_TYPE_S && !lfe->lfe_satconf && !muuid) {
     scconf = conf ? htsmsg_get_map(conf, "satconf") : NULL;
     lfe->lfe_satconf = linuxdvb_satconf_create(lfe, scconf);
+  }
+
+  /* Special enigma2 settings - DMX_SET_SOURCE */
+  fd = tvh_open(lfe->lfe_dmx_path, O_RDWR, 0);
+  if (fd >= 0) {
+    ioctl(fd, _IOW('o', 49, int), &lfe->lfe_number);
+    close(fd);
   }
 
   /* Double check enabled */

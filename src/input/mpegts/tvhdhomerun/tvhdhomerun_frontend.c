@@ -26,6 +26,9 @@
 #include "tcp.h"
 #include "tvhdhomerun_private.h"
 
+#include <arpa/inet.h>
+#include "config.h"
+
 static int
 tvhdhomerun_frontend_get_weight ( mpegts_input_t *mi, mpegts_mux_t *mm, int flags, int weight )
 {
@@ -90,7 +93,12 @@ tvhdhomerun_frontend_input_thread ( void *aux )
 
   /* local IP */
   /* TODO: this is nasty */
-  local_ip = hdhomerun_device_get_local_machine_addr(hfe->hf_hdhomerun_tuner);
+  if (*config.local_ip == 0)
+    local_ip = hdhomerun_device_get_local_machine_addr(hfe->hf_hdhomerun_tuner);
+  else if (inet_pton(AF_INET, config.local_ip, &local_ip))
+    local_ip = ntohl(local_ip);
+  else
+    tvherror(LS_TVHDHOMERUN, "failed to parse local IP (%s)", config.local_ip);
 
   /* first setup a local socket for the device to stream to */
   sockfd = tvh_socket(AF_INET, SOCK_DGRAM, 0);
@@ -126,7 +134,7 @@ tvhdhomerun_frontend_input_thread ( void *aux )
   memset(&sock_addr, 0, sizeof(sock_addr));
   sock_addr.sin_family = AF_INET;
   sock_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  sock_addr.sin_port = 0;
+  sock_addr.sin_port = config.local_port==0?0:htons(config.local_port + hfe->hf_tunerNumber);
   if(bind(sockfd, (struct sockaddr *) &sock_addr, sizeof(sock_addr)) != 0) {
     tvherror(LS_TVHDHOMERUN, "failed bind socket: %d", errno);
     close(sockfd);
@@ -437,6 +445,16 @@ static int tvhdhomerun_frontend_tune(tvhdhomerun_frontend_t *hfe, mpegts_mux_ins
       break;
     case DVB_TYPE_CABLECARD:
       snprintf(channel_buf, sizeof(channel_buf), "%u", dmc->u.dmc_fe_cablecard.vchannel);
+      break;
+    case DVB_TYPE_ATSC_T:
+      switch(dmc->dmc_fe_modulation) {
+        case DVB_MOD_VSB_8:
+          snprintf(channel_buf, sizeof(channel_buf), "auto6t:%u", dmc->dmc_fe_freq);
+          break;
+        default:
+          snprintf(channel_buf, sizeof(channel_buf), "auto:%u", dmc->dmc_fe_freq);
+          break;
+      }
       break;
     default:
       snprintf(channel_buf, sizeof(channel_buf), "auto:%u", dmc->dmc_fe_freq);

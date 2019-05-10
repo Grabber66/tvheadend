@@ -233,13 +233,15 @@ tvheadend.dvrDetails = function(grid, index) {
           fanart_div.applyStyles({
               'background' : 'url(' + fanart + ') center center no-repeat',
               'opacity': 0.15,
-              'position': 'relative',
+              'position': 'absolute',
               'width' : '100%',
               'height': '100%',
               // This causes background image to scale on css3 with aspect ratio, image
               // can overflow, vs. 'contain' which will leave blank space top+bottom to
               // ensure image is fully displayed in the window
               'background-size': 'cover',
+              // Image can not be clicked on (so events propagate to buttons).
+              'pointer-events': 'none',
           });
       }                        // Have fanart div
 
@@ -280,7 +282,7 @@ tvheadend.dvrDetails = function(grid, index) {
             title: dialogTitle,
             iconCls: 'info',
             layout: 'fit',
-            width: 760,
+            width: 790,
             height: windowHeight,
             constrainHeader: true,
             buttonAlign: 'center',
@@ -1248,6 +1250,10 @@ tvheadend.autorec_editor = function(panel, index) {
             maxsched:     { width: 80 },
             star_rating:  { width: 80 },
             config_name:  { width: 120 },
+            minyear:      { width: 100 },
+            maxyear:      { width: 100 },
+            minseason:    { width: 100 },
+            maxseason:    { width: 100 },
             owner:        { width: 100 },
             creator:      { width: 200 },
             comment:      { width: 200 }
@@ -1267,7 +1273,7 @@ tvheadend.autorec_editor = function(panel, index) {
         del: true,
         list: 'enabled,name,title,fulltext,channel,tag,start,start_window,' +
               'weekdays,minduration,maxduration,record,btype,content_type,cat1,cat2,cat3' +
-              'star_rating,pri,dedup,directory,config_name,owner,creator,comment',
+              'star_rating,pri,dedup,directory,config_name,minseason,maxseason,minyear,maxyear,owner,creator,comment',
         sort: {
           field: 'name',
           direction: 'ASC'

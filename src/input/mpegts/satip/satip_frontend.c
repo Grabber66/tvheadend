@@ -962,6 +962,7 @@ satip_frontend_decode_rtcp( satip_frontend_t *lfe, const char *name,
                             mpegts_mux_instance_t *mmi,
                             uint8_t *rtcp, size_t len )
 {
+  const satip_device_t *device = lfe->sf_device;
   signal_state_t status;
   uint16_t l, sl;
   char *s;
@@ -1024,15 +1025,20 @@ satip_frontend_decode_rtcp( satip_frontend_t *lfe, const char *name,
         s = (char *)rtcp + 16;
         tvhtrace(LS_SATIP, "Status string: '%s'", s);
         status = SIGNAL_NONE;
-        if (strncmp(s, "ver=0.9;tuner=", 14) == 0 ||
-            strncmp(s, "ver=1.2;tuner=", 14) == 0) {
-          n = http_tokenize(s + 14, argv, 4, ',');
+        if (strncmp(s, "ver=1.2;src=1;tuner=", 20) == 0) {
+          /* broken FritzBox 6490/6590 */
+          n = http_tokenize(s + 20, argv, ARRAY_SIZE(argv), ',');
+          goto __ver12;
+        } else if (strncmp(s, "ver=0.9;tuner=", 14) == 0 ||
+                   strncmp(s, "ver=1.2;tuner=", 14) == 0) {
+          n = http_tokenize(s + 14, argv, ARRAY_SIZE(argv), ',');
+__ver12:
           if (n < 4)
             goto fail;
-          if (atoi(argv[0]) != lfe->sf_number)
+          if (atoi(argv[0]) != lfe->sf_number && device->sd_sig_tunerno)
             goto fail;
           mmi->tii_stats.signal =
-            atoi(argv[1]) * 0xffff / lfe->sf_device->sd_sig_scale;
+            atoi(argv[1]) * 0xffff / device->sd_sig_scale;
           mmi->tii_stats.signal_scale =
             SIGNAL_STATUS_SCALE_RELATIVE;
           if (atoi(argv[2]) > 0)
@@ -1051,13 +1057,13 @@ satip_frontend_decode_rtcp( satip_frontend_t *lfe, const char *name,
           if ((s = strstr(s + 8, ";tuner=")) == NULL)
             goto fail;
           s += 7;
-          n = http_tokenize(s, argv, 4, ',');
+          n = http_tokenize(s, argv, ARRAY_SIZE(argv), ',');
           if (n < 4)
             goto fail;
-          if (atoi(argv[0]) != lfe->sf_number)
+          if (atoi(argv[0]) != lfe->sf_number && device->sd_sig_tunerno)
             goto fail;
           mmi->tii_stats.signal =
-            atoi(argv[1]) * 0xffff / lfe->sf_device->sd_sig_scale;
+            atoi(argv[1]) * 0xffff / device->sd_sig_scale;
           mmi->tii_stats.signal_scale =
             SIGNAL_STATUS_SCALE_RELATIVE;
           if (atoi(argv[2]) > 0)
@@ -1070,10 +1076,10 @@ satip_frontend_decode_rtcp( satip_frontend_t *lfe, const char *name,
           n = http_tokenize(s + 14, argv, 4, ',');
           if (n < 4)
             goto fail;
-          if (atoi(argv[0]) != lfe->sf_number)
+          if (atoi(argv[0]) != lfe->sf_number && device->sd_sig_tunerno)
             goto fail;
           mmi->tii_stats.signal =
-            atoi(argv[1]) * 0xffff / lfe->sf_device->sd_sig_scale;
+            atoi(argv[1]) * 0xffff / device->sd_sig_scale;
           mmi->tii_stats.signal_scale =
             SIGNAL_STATUS_SCALE_RELATIVE;
           if (atoi(argv[2]) > 0)
@@ -1541,7 +1547,6 @@ satip_frontend_rtp_data_received( http_client_t *hc, void *buf, size_t len )
       tvh_mutex_unlock(&lfe->sf_dvr_lock);
       lfe->sf_last_data_tstamp = mclk();
     }
-    lfe->sf_last_data_tstamp = mclk();
 
   } else if (b[1] == 1) {
 
@@ -1585,7 +1590,7 @@ satip_frontend_input_thread ( void *aux )
   int rtsp_flags, position, reply;
   uint32_t seq, unc;
   udp_multirecv_t um;
-  uint64_t u64, u64_2;
+  uint64_t u64, u64_2, fatal_timeout;
   long stream_id;
 
   /* If set - the thread will be cancelled */
@@ -1890,6 +1895,7 @@ new_tune:
   lfe->sf_skip_ts = MINMAX(lfe->sf_device->sd_skip_ts, 0, 200) * 188;
   
   lfe->sf_last_activity_tstamp = mclk();
+  fatal_timeout = sec2mono(5 + MINMAX(lfe->sf_grace_period, 0, 60));
 
   while ((reply || running) && !fatal) {
 
@@ -1933,7 +1939,7 @@ new_tune:
       continue;
     }
 
-    if (lfe->sf_last_activity_tstamp + sec2mono(5) < mclk()) {
+    if (lfe->sf_last_activity_tstamp + fatal_timeout < mclk()) {
       tvhwarn(LS_SATIP, "%s - no data received, restarting RTSP", buf);
       satip_frontend_tuning_error(lfe, tr);
       fatal = 1;
@@ -2035,7 +2041,8 @@ new_tune:
         default:
           if (rtsp->hc_code >= 400) {
             tvherror(LS_SATIP, "%s - RTSP cmd error %d (%s) [%i-%i]",
-                     buf, r, strerror(-r), rtsp->hc_cmd, rtsp->hc_code);
+                     buf, r, r > 0 ? http_client_con2str(r) : strerror(-r),
+                     rtsp->hc_cmd, rtsp->hc_code);
             satip_frontend_tuning_error(lfe, tr);
             fatal = 1;
           }
@@ -2061,7 +2068,7 @@ new_tune:
       if (c > 0) {
         lfe->sf_last_activity_tstamp = mclk();
         tvh_mutex_lock(&lfe->sf_dvr_lock);
-       if (lfe->sf_req == lfe->sf_req_thread)
+        if (lfe->sf_req == lfe->sf_req_thread)
           satip_frontend_decode_rtcp(lfe, buf, mmi, b, c);
         tvh_mutex_unlock(&lfe->sf_dvr_lock);
       }

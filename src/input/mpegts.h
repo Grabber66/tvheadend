@@ -61,7 +61,7 @@ typedef TAILQ_HEAD(mpegts_mux_queue,mpegts_mux) mpegts_mux_queue_t;
 typedef LIST_HEAD (,mpegts_mux)                 mpegts_mux_list_t;
 typedef LIST_HEAD (,mpegts_network_link)        mpegts_network_link_list_t;
 typedef TAILQ_HEAD(mpegts_table_feed_queue, mpegts_table_feed)
-  mpegts_table_feed_queue_t;
+                                                mpegts_table_feed_queue_t;
 
 /* Classes */
 extern const idclass_t mpegts_network_class;
@@ -287,6 +287,7 @@ struct mpegts_table
 
 struct mpegts_table_feed {
   TAILQ_ENTRY(mpegts_table_feed) mtf_link;
+  uint8_t mtf_cc_restart;
   int mtf_len;
   mpegts_mux_t *mtf_mux;
   uint8_t mtf_tsb[0];
@@ -342,6 +343,7 @@ struct mpegts_network
    * Scanning
    */
   mpegts_mux_queue_t mn_scan_pend;    // Pending muxes
+  mpegts_mux_queue_t mn_scan_ipend;   // Pending muxes (idle)
   mpegts_mux_queue_t mn_scan_active;  // Active muxes
   mtimer_t           mn_scan_timer;   // Timer for activity
   mtimer_t           mn_bouquet_timer;
@@ -366,6 +368,7 @@ struct mpegts_network
   /*
    * Configuration
    */
+  int      mn_enabled;
   uint16_t mn_nid;
   uint16_t mn_satip_source;
   int      mn_autodiscovery;
@@ -383,6 +386,7 @@ typedef enum mpegts_mux_scan_state
 {
   MM_SCAN_STATE_IDLE,     // Nothing
   MM_SCAN_STATE_PEND,     // Queue'd pending scan
+  MM_SCAN_STATE_IPEND,    // Queue'd pending scan - idle queue
   MM_SCAN_STATE_ACTIVE,   // Scan is active
 } mpegts_mux_scan_state_t;
 
@@ -410,18 +414,9 @@ enum mpegts_mux_epg_flag
   MM_EPG_DISABLE,
   MM_EPG_ENABLE,
   MM_EPG_FORCE,
-  MM_EPG_ONLY_EIT,
-  MM_EPG_ONLY_UK_FREESAT,
-  MM_EPG_ONLY_UK_FREEVIEW,
-  MM_EPG_ONLY_VIASAT_BALTIC,
-  MM_EPG_ONLY_OPENTV_SKY_UK,
-  MM_EPG_ONLY_OPENTV_SKY_ITALIA,
-  MM_EPG_ONLY_OPENTV_SKY_AUSAT,
-  MM_EPG_ONLY_BULSATCOM_39E,
-  MM_EPG_ONLY_PSIP,
-  MM_EPG_ONLY_UK_CABLE_VIRGIN
+  MM_EPG_MANUAL = 100,
+  MM_EPG_DETECTED
 };
-#define MM_EPG_LAST MM_EPG_ONLY_UK_CABLE_VIRGIN
 
 enum mpegts_mux_ac3_flag
 {
@@ -539,6 +534,7 @@ struct mpegts_mux
   char    *mm_crid_authority;
   int      mm_enabled;
   int      mm_epg;
+  char    *mm_epg_module_id;
   char    *mm_charset;
   int      mm_pmt_ac3;
   int      mm_eit_tsid_nocheck;
@@ -757,7 +753,7 @@ struct mpegts_input
   void (*mi_stopping_mux)   (mpegts_input_t*,mpegts_mux_instance_t*);
   void (*mi_stopped_mux)    (mpegts_input_t*,mpegts_mux_instance_t*);
   int  (*mi_has_subscription) (mpegts_input_t*, mpegts_mux_t *mm);
-  void (*mi_tuning_error)   (mpegts_input_t*, mpegts_mux_t *);
+  void (*mi_error)          (mpegts_input_t*, mpegts_mux_t *, int tss_flags);
   void (*mi_empty_status)   (mpegts_input_t*, tvh_input_stream_t *);
   idnode_set_t *(*mi_network_list) (mpegts_input_t*);
 };
@@ -949,6 +945,7 @@ int mpegts_mux_set_network_name ( mpegts_mux_t *mm, const char *name );
 int mpegts_mux_set_tsid ( mpegts_mux_t *mm, uint16_t tsid, int force );
 int mpegts_mux_set_onid ( mpegts_mux_t *mm, uint16_t onid );
 int mpegts_mux_set_crid_authority ( mpegts_mux_t *mm, const char *defauth );
+int mpegts_mux_set_epg_module ( mpegts_mux_t *mm, const char *modid );
 
 void mpegts_mux_open_table ( mpegts_mux_t *mm, mpegts_table_t *mt, int subscribe );
 void mpegts_mux_unsubscribe_table ( mpegts_mux_t *mm, mpegts_table_t *mt );
@@ -986,6 +983,8 @@ mpegts_mux_find_pid(mpegts_mux_t *mm, int pid, int create)
 }
 
 void mpegts_mux_update_pids ( mpegts_mux_t *mm );
+
+void mpegts_input_create_mux_instance ( mpegts_input_t *mi, mpegts_mux_t *mm );
 
 int mpegts_mux_compare ( mpegts_mux_t *a, mpegts_mux_t *b );
 

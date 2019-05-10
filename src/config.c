@@ -1691,6 +1691,7 @@ config_boot
   config.idnode.in_class = &config_class;
   config.ui_quicktips = 1;
   config.http_auth = HTTP_AUTH_DIGEST;
+  config.http_auth_algo = HTTP_AUTH_ALGO_MD5;
   config.proxy = 0;
   config.realm = strdup("tvheadend");
   config.info_area = strdup("login,storage,time");
@@ -1707,6 +1708,9 @@ config_boot
   config.iptv_tpool_count = 2;
   config.date_mask = strdup("");
   config.label_formatting = 0;
+  config.hdhomerun_ip = strdup("");
+  config.local_ip = strdup("");
+  config.local_port = 0;
 
   idclass_register(&config_class);
 
@@ -1843,6 +1847,8 @@ void config_done ( void )
   free(config.picon_path);
   free(config.cors_origin);
   free(config.date_mask);
+  free(config.hdhomerun_ip);
+  free(config.local_ip);
   file_unlock(config_lock, config_lock_fd);
 }
 
@@ -2037,6 +2043,17 @@ config_class_http_auth_list ( void *o, const char *lang )
   return strtab2htsmsg(tab, 1, lang);
 }
 
+static htsmsg_t *
+config_class_http_auth_algo_list ( void *o, const char *lang )
+{
+  static const struct strtab tab[] = {
+    { N_("MD5"),                   HTTP_AUTH_ALGO_MD5 },
+    { N_("SHA-256"),               HTTP_AUTH_ALGO_SHA256 },
+    { N_("SHA-512/256"),           HTTP_AUTH_ALGO_SHA512_256 },
+  };
+  return strtab2htsmsg(tab, 1, lang);
+}
+
 #if ENABLE_MPEGTS_DVB
 static void
 config_muxconfpath_notify_cb(void *opaque, int disarmed)
@@ -2101,8 +2118,12 @@ const idclass_t config_class = {
          .number = 5,
       },
       {
-         .name   = N_("Miscellaneous Settings"),
+         .name   = N_("HDHomeRun"),
          .number = 6,
+      },
+      {
+         .name   = N_("Miscellaneous Settings"),
+         .number = 7,
       },
       {}
   },
@@ -2384,6 +2405,16 @@ const idclass_t config_class = {
       .group  = 5
     },
     {
+      .type   = PT_INT,
+      .id     = "digest_algo",
+      .name   = N_("Digest hash type"),
+      .desc   = N_("The hash algorithm type for the digest authentication."),
+      .list   = config_class_http_auth_algo_list,
+      .off    = offsetof(config_t, http_auth_algo),
+      .opts   = PO_EXPERT,
+      .group  = 5
+    },
+    {
       .type   = PT_U32,
       .intextra = INTEXTRA_RANGE(1, 0x7ff, 1),
       .id     = "cookie_expires",
@@ -2434,12 +2465,56 @@ const idclass_t config_class = {
     },
     {
       .type   = PT_STR,
+      .id     = "hdhomerun_ip",
+      .name   = N_("HDHomerun IP Address"),
+      .desc   = N_("IP address of the HDHomerun device. This is needed if you "
+                   "plan to run TVheadend in a container and you want to stream "
+                   "from an HDHomerun without enabling host networking for "
+                   "the container."),
+      .off    = offsetof(config_t, hdhomerun_ip),
+      .opts   = PO_HIDDEN | PO_EXPERT,
+      .group  = 6
+    },
+    {
+      .type   = PT_STR,
+      .id     = "local_ip",
+      .name   = N_("Local IP Address"),
+      .desc   = N_("IP of the Docker host. Each HDHomeRun tuner sends data "
+                   "to TVheadend through a socket. This lets you define the "
+                   "IP address that HDHomeRun needs to send to. Leave this "
+                   "blank if you want TVheadend to automatically pick an "
+                   "address."),
+      .off    = offsetof(config_t, local_ip),
+      .opts   = PO_HIDDEN | PO_EXPERT,
+      .group  = 6
+    },
+    {
+      .type   = PT_INT,
+      .id     = "local_port",
+      .name   = N_("Local Socket Port Number"),
+      .desc   = N_("Starting port number of the UDP listeners. The listeners "
+                   "listen for traffic from the HDHomerun tuners. This is "
+                   "needed if you plan to run TVheadend in a container and "
+                   "you want to stream from an HDHomerun without enabling "
+                   "host networking for the container. Set this to 0 if you "
+                   "want the port numbers to be assigned dynamically. If you "
+                   "have multiple tuners, this will be the start of the port "
+                   "range. For example, if you have 4 tuners and you set this "
+                   "to 9983, then tuner 0 will talk to port 9983, tuner 1 "
+                   "will talk to port 9984, tuner 2 will talk to port 9985, "
+                   "and tuner 3 will talk to port 9986."),
+      .off    = offsetof(config_t, local_port),
+      .opts   = PO_HIDDEN | PO_EXPERT,
+      .group  = 6
+    },
+    {
+      .type   = PT_STR,
       .id     = "http_user_agent",
       .name   = N_("HTTP User Agent"),
       .desc   = N_("The user agent string for the build-in HTTP client."),
       .off    = offsetof(config_t, http_user_agent),
       .opts   = PO_HIDDEN | PO_EXPERT,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_INT,
@@ -2448,7 +2523,7 @@ const idclass_t config_class = {
       .desc   = N_("Set the number of threads for IPTV to split load "
                    "across more CPUs."),
       .off    = offsetof(config_t, iptv_tpool_count),
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_INT,
@@ -2465,7 +2540,7 @@ const idclass_t config_class = {
       .off    = offsetof(config_t, dscp),
       .list   = config_class_dscp_list,
       .opts   = PO_EXPERT | PO_DOC_NLIST,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_U32,
@@ -2475,7 +2550,7 @@ const idclass_t config_class = {
                    "there is a delay receiving CA keys. "),
       .off    = offsetof(config_t, descrambler_buffer),
       .opts   = PO_EXPERT,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_BOOL,
@@ -2486,7 +2561,7 @@ const idclass_t config_class = {
                    "It may cause issues with some clients / players."),
       .off    = offsetof(config_t, parser_backlog),
       .opts   = PO_EXPERT,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_STR,
@@ -2499,7 +2574,7 @@ const idclass_t config_class = {
       .off    = offsetof(config_t, muxconf_path),
       .notify = config_muxconfpath_notify,
       .opts   = PO_ADVANCED,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_BOOL,
@@ -2507,7 +2582,7 @@ const idclass_t config_class = {
       .name   = N_("Parse HbbTV info"),
       .desc   = N_("Parse HbbTV information from services."),
       .off    = offsetof(config_t, hbbtv),
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_BOOL,
@@ -2518,7 +2593,7 @@ const idclass_t config_class = {
                    "the system clock (normally only root)."),
       .off    = offsetof(config_t, tvhtime_update_enabled),
       .opts   = PO_EXPERT,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_BOOL,
@@ -2530,7 +2605,7 @@ const idclass_t config_class = {
                    "performance is not that great."),
       .off    = offsetof(config_t, tvhtime_ntp_enabled),
       .opts   = PO_EXPERT,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_U32,
@@ -2542,7 +2617,7 @@ const idclass_t config_class = {
                    "excessive oscillations on the system clock."),
       .off    = offsetof(config_t, tvhtime_tolerance),
       .opts   = PO_EXPERT,
-      .group  = 6,
+      .group  = 7,
     },
     {
       .type   = PT_STR,

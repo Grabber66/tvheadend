@@ -280,6 +280,14 @@ mpegts_service_is_enabled(service_t *t, int flags)
   return mm->mm_is_enabled(mm) ? s->s_enabled : 0;
 }
 
+static int
+mpegts_service_is_enabled_raw(service_t *t, int flags)
+{
+  mpegts_service_t *s = (mpegts_service_t*)t;
+  mpegts_mux_t *mm    = s->s_dvb_mux;
+  return mm->mm_is_enabled(mm) ? s->s_enabled : 0;
+}
+
 /*
  * Save
  */
@@ -692,7 +700,7 @@ mpegts_service_find_e2(uint32_t stype, uint32_t sid, uint32_t tsid,
   switch (hash & 0xFFFF0000) {
   case 0xFFFF0000: idc = &dvb_mux_dvbc_class; break;
   case 0xEEEE0000: idc = &dvb_mux_dvbt_class; break;
-  case 0xDDDD0000: idc = &dvb_mux_dvbt_class; break;
+  case 0xDDDD0000: idc = &dvb_mux_atsc_t_class; break;
   default:         idc = &dvb_mux_dvbs_class; break;
   }
   LIST_FOREACH(mn, &mpegts_network_all, mn_global_link) {
@@ -1175,7 +1183,7 @@ mpegts_service_create_raw ( mpegts_mux_t *mm )
   s->s_dvb_mux        = mm;
 
   s->s_delete         = mpegts_service_delete;
-  s->s_is_enabled     = mpegts_service_is_enabled;
+  s->s_is_enabled     = mpegts_service_is_enabled_raw;
   s->s_config_save    = mpegts_service_config_save;
   s->s_enlist         = mpegts_service_enlist_raw;
   s->s_start_feed     = mpegts_service_start;

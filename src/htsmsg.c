@@ -125,7 +125,13 @@ htsmsg_field_add(htsmsg_t *msg, const char *name, int type, int flags, size_t es
     assert(name != NULL);
   }
 
-  nsize = name ? htsmsg_malloc_align(type, strlen(name) + 1) : 0;
+  if (name) {
+    nsize = strlen(name);
+    assert(nsize < 256); /* limit for htsmsg_binary2 */
+    nsize = htsmsg_malloc_align(type, nsize + 1);
+  } else {
+    nsize = 0;
+  }
   f = malloc(sizeof(htsmsg_field_t) + nsize + esize);
   if (f == NULL)
     return NULL;
@@ -257,6 +263,23 @@ htsmsg_create_list(void)
 #endif
   }
   return msg;
+}
+
+
+
+/*
+ *
+ */
+void
+htsmsg_concat(htsmsg_t *msg, htsmsg_t *sub)
+{
+  if (sub == NULL)
+    return;
+  assert(msg->hm_islist == sub->hm_islist);
+  if (msg->hm_islist != sub->hm_islist)
+    return;
+  TAILQ_CONCAT(&msg->hm_fields, &sub->hm_fields, hmf_link);
+  htsmsg_destroy(sub);
 }
 
 

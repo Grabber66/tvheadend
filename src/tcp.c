@@ -19,11 +19,11 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <ifaddrs.h>
 #include <netdb.h>
@@ -663,6 +663,21 @@ tcp_connection_cancel(uint32_t id)
         tsl->ops.cancel(tsl->opaque);
       break;
     }
+}
+
+/**
+ *
+ */
+void
+tcp_connection_cancel_all(void)
+{
+  tcp_server_launch_t *tsl;
+
+  lock_assert(&global_lock);
+
+  LIST_FOREACH(tsl, &tcp_server_active, alink)
+    if (tsl->ops.cancel)
+      tsl->ops.cancel(tsl->opaque);
 }
 
 /*
